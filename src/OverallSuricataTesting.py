@@ -1,32 +1,16 @@
-import numpy as np
-import pandas as pd
 import sys
+
+import pandas as pd
+
 sys.path.append('../')
-from AttackStages import SignatureMapping as attkstg_map
-from AttackStages import MicroAttackStage
-from AttackStages import MacroAttackStage
-from AttackStages import MicroToMacroMapping
-from AttackStagesCondensed import MicroAttackStageCondensed
-from fastai import *
-from fastai.text import *
-import re
 import torch
-from sklearn.model_selection import train_test_split
-from AttackStages import SensorObservability
-import MitreAttackInterface
-from sklearn.model_selection import KFold
 import statistics
-import ClassifierAnalysis
 import pickle as pkl
-from AIF_Mappings import RecentAlertsMapping
-import ChangeInIntrinsicAttention
-import random
-import LearningUtils
+from aif.AIF_Mappings import RecentAlertsMapping
+from utils import LearningUtils
 import SignatureTransferLearningNewData
-import json
 from SignatureAttackStagePredictor import SignatureAttackStagePredictor
-from tqdm import tqdm 
-import ipdb
+from tqdm import tqdm
 
 out_path = '../data_store/'
 if not torch.cuda.is_available():
@@ -163,7 +147,7 @@ if __name__ == "__main__" :
 	class_suricata_mc_preds =process_uncertainty_stats_class(uncertainty_preds)
 	suricata_mc_preds = process_uncertainty_stats(uncertainty_preds, output_df=True)
 	
-	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT,seed=SEED)
+	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT, seed=SEED)
 	suricata_main_preds, suricata_testing_preds = LearningUtils.split_train_test(suricata_mc_preds, split=.75, seed=SEED)
 	
 	lang_model, data_lm, encoder_name = SignatureTransferLearningNewData.signature_transfer_learning_language_model(mode='all', additional_samples=None, bs_lang=64, test_mode=False, random_seed=0)

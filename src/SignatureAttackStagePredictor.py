@@ -1,15 +1,6 @@
-import pandas as pd
-import sys
-from AttackStagesCondensed import MicroAttackStage
-from AttackStagesCondensed import MacroAttackStage
-from AttackStagesCondensed import MicroToMacroMapping
-from AttackStagesCondensed import MicroToMacroCondensedMapping
-from AttackStagesCondensed import MicroAttackStageCondensed
-import pickle
-from fastai import *
-from fastai.text import *
-import re
 import torch
+
+from aif.AttackStagesCondensed import MicroAttackStageCondensed
 
 out_path = './'
 if not torch.cuda.is_available():

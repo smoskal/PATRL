@@ -1,23 +1,11 @@
 import sys
 sys.path.append('../')
 
-import pandas as pd
-import sys
-from AttackStagesCondensed import MicroAttackStage
-from AttackStagesCondensed import MacroAttackStage
-from AttackStagesCondensed import MicroToMacroMapping
-from AttackStagesCondensed import MicroToMacroCondensedMapping
-from AttackStagesCondensed import MicroAttackStageCondensed
-import pickle
-from fastai import *
-from fastai.text import *
-import re
+from aif.AttackStagesCondensed import MicroAttackStageCondensed
 import torch
-from AIF_Mappings import RecentAlertsMapping
-import random
-import LearningUtils
+from aif.AIF_Mappings import RecentAlertsMapping
+from utils import LearningUtils
 from SignatureAttackStagePredictor import SignatureAttackStagePredictor
-from tqdm import tqdm
 import matplotlib
 import matplotlib.pyplot as plt
 

@@ -1,0 +1,5 @@
+
+venv/*
+.idea/*
+pretrained/default_class_model/export.pkl
+pretrained/default_class_model/export_old.pkl

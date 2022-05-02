@@ -1,29 +1,14 @@
-import numpy as np
-import pandas as pd
 import sys
+
+import pandas as pd
+
 sys.path.append('../')
-from AttackStages import SignatureMapping as attkstg_map
-from AttackStages import MicroAttackStage
-from AttackStages import MacroAttackStage
-from AttackStages import MicroToMacroMapping
-from AttackStagesCondensed import MicroAttackStageCondensed
-from fastai import *
-from fastai.text import *
-import re
 import torch
-from sklearn.model_selection import train_test_split
-from AttackStages import SensorObservability
-import MitreAttackInterface
-from sklearn.model_selection import KFold
 import statistics
-import ClassifierAnalysis
 import pickle as pkl
-from AIF_Mappings import RecentAlertsMapping
-import ChangeInIntrinsicAttention
-import random
-import LearningUtils
+from aif.AIF_Mappings import RecentAlertsMapping
+from utils import LearningUtils
 import SignatureTransferLearningNewData
-import json
 from SignatureAttackStagePredictor import SignatureAttackStagePredictor
 from tqdm import tqdm 
 
@@ -31,7 +16,7 @@ out_path = '../data_store/'
 if not torch.cuda.is_available():
 	print("ERROR: CUDA not available.")
 else :
-	torch.cuda.set_device(2)
+	torch.cuda.set_device(0)
 	torch.multiprocessing.freeze_support()
 	
 def process_uncertainty_stats(uncertainty_preds, output_df=True, remove_deleted=True) :
@@ -95,7 +80,7 @@ def uncertainty_statistics(uncertainty_preds) :
 def sample_uncertainty_df(data_df, sample_size, mode='RANDOM') : 
 
 	if mode == 'RANDOM' :
-		sampled_data = data_df.sample(sample_size)
+		sampled_data = suricata_main_preds.sample(sample_size)
 		data_df = data_df.drop(sampled_data.index)
 	elif mode == 'TOP_UNCERT' :
 		sorted_df = data_df.sort_values(by='Uncert',ascending=False)
@@ -130,24 +115,6 @@ def sample_recomputed_uncertainty(recomputed_uncertainty, uncertainty_preds, sam
 	
 	return recomputed_sample, recomputed_uncertainty_new
 	
-def update_pseudo_labels(label_df, model:SignatureAttackStagePredictor) :
-	columns = list(label_df)
-	data = label_df.values.tolist()
-	out_data = []
-	
-	
-	for sig in data :
-		new_pred = model.predict(sig[0])
-		temp_data = [sig[0], new_pred.value, sig[2]]
-		out_data.append(temp_data)
-		
-	out_df = pd.DataFrame(out_data, columns=columns)
-	return out_df
-	
-def get_label_stats(data) :
-	stats = data['Label'].value_counts().sort_index()
-	return stats
-	
 def recompute_mc_uncertainty(pred_model, recomputed_uncertainty) :
 	
 	mc_list = recomputed_uncertainty.values.tolist()
@@ -162,20 +129,15 @@ def recompute_mc_uncertainty(pred_model, recomputed_uncertainty) :
 	out_df = pd.DataFrame(mc_list_new, columns=['Sig','Label','Uncert'])
 	return out_df
 	
-def get_label_stats(data) :
-	stats = data['Label'].value_counts().sort_index()
-	return stats
-	
 if __name__ == "__main__" :
 
 	LABELED_DATA_SPLIT = .2
 	SEED = 69
-	SAMPLE_MODE = 'TOP_UNCERT'
+	SAMPLE_MODE = 'LEAST_UNCERT'
 	RECOMPUTE_UNCERT = True
-	RECOMPUTE_SIZE = 1500
-	ITERATION_SIZE = 250
-	RECOMPUTE_ITER_STEP = 500
-	RELABEL_PSEUDO = True
+	RECOMPUTE_SIZE = 2000
+	ITERATION_SIZE = 500
+
 	tok = SpacyTokenizer('en')
 	the_tokenizer = Tokenizer()
 
@@ -186,16 +148,15 @@ if __name__ == "__main__" :
 	main_df['i'] = main_df.index
 	
 	uncertainty_preds = pkl.load(open('suricata_uncertainty_predictions_sept22.pkl', 'rb'))
-	class_suricata_mc_preds =process_uncertainty_stats_class(uncertainty_preds)
+	#class_suricata_mc_preds =process_uncertainty_stats_class(uncertainty_preds)
 	suricata_mc_preds = process_uncertainty_stats(uncertainty_preds, output_df=True)
-	
-	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT,seed=SEED)
-	suricata_main_preds, suricata_testing_preds = LearningUtils.split_train_test(suricata_mc_preds, split=.015, seed=SEED)
-	suricata_testing_preds = pd.read_pickle('./suricata_unknown_testing_dataset.pkl')
 	
 	recomputed_mc_preds = sample_uncertainty_df(suricata_mc_preds, RECOMPUTE_SIZE, mode=SAMPLE_MODE)
 	
-	lang_model, data_lm, encoder_name = SignatureTransferLearningNewData.signature_transfer_learning_language_model(mode='all', additional_samples=None, bs_lang=64, test_mode=False, random_seed=0)
+	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT, seed=SEED)
+	suricata_main_preds, suricata_testing_preds = LearningUtils.split_train_test(suricata_mc_preds, split=.015, seed=SEED)
+	
+	lang_model, data_lm, encoder_name = SignatureTransferLearningNewData.signature_transfer_learning_language_model(mode='normal', additional_samples=None, bs_lang=64, test_mode=False, random_seed=0)
 	
 	gt_model, top1_gt, topk_gt ,class_map_gt, miss_counts_gt, miss_stats_gt, data_stats_gt, miss_record_gt = SignatureTransferLearningNewData.signature_transfer_learning_classifier_model_testing(train_df_sig, test_df_sig,encoder_name, data_lm, class_map, class_labels, bs_sig=16, test_mode=False)
 	
@@ -205,57 +166,27 @@ if __name__ == "__main__" :
 	og_test_iter_preds = pd.DataFrame()
 	unk_test_iter_preds = pd.DataFrame()
 	
-	new_training_iter = main_df.copy()
+	new_training_iter = train_df_sig.copy()
 	
-	og_test_iter_mc = pd.DataFrame()
-	unk_test_iter_mc = pd.DataFrame()
-	
-	pl_class_dist = pd.DataFrame()
-	
-	recompute_count = RECOMPUTE_ITER_STEP
-	for iter in range(0, 2501, ITERATION_SIZE) :
-		print(f"Iteration Step: {iter} - {SAMPLE_MODE}")
-		print(f"Relabel Pseudo - {RELABEL_PSEUDO}")
+	for iter in range(5000, 10001, ITERATION_SIZE) :
+		print(f"Iteration Step: {iter}")
 		
 		if not RECOMPUTE_UNCERT :
 			pseudo_labels = sample_uncertainty_df(suricata_mc_preds, iter, mode=SAMPLE_MODE)
 		else :
-			if not iter == 0 :
-				pseudo_labels, recomputed_mc_preds = sample_recomputed_uncertainty(recomputed_mc_preds, suricata_mc_preds, ITERATION_SIZE, mode=SAMPLE_MODE)
-			
-			
-		if RELABEL_PSEUDO :
-			if iter == 0 :
-				pass
-				#model = SignatureAttackStagePredictor(gt_model)
-				#pseudo_labels = update_pseudo_labels(main_df, model)
-			else: 
-				model = SignatureAttackStagePredictor(iter_model)
-				pseudo_labels = update_pseudo_labels(pseudo_labels, model)
+			pseudo_labels, recomputed_mc_preds = sample_recomputed_uncertainty(recomputed_mc_preds, suricata_mc_preds, ITERATION_SIZE, mode=SAMPLE_MODE)
+		
 		
 		#suricata_main_preds.drop(pseudo_labels.index)
-		
-		
-		if iter > 0 : new_training_iter = pd.concat([new_training_iter, pseudo_labels])
-		
-		label_stats = get_label_stats(new_training_iter)
-		if 'Label' not in pl_class_dist :
-			pl_class_dist['Label'] = label_stats.index
-		pl_class_dist[iter] = label_stats
-		
-		
+		new_training_iter = pd.concat([new_training_iter, pseudo_labels])
 		print(f'LENGTH OF TRAINING SET: {len(new_training_iter)}')
 		
-		iter_model, top1_iter, topk_iter ,class_map_iter, miss_counts_iter, miss_stats_iter1, data_stats_iter, miss_record_iter = SignatureTransferLearningNewData.signature_transfer_learning_classifier_model_testing(new_training_iter, main_df,encoder_name, data_lm, class_map, class_labels, bs_sig=16, test_mode=False)
+		iter_model, top1_iter, topk_iter ,class_map_iter, miss_counts_iter, miss_stats_iter1, data_stats_iter, miss_record_iter = SignatureTransferLearningNewData.signature_transfer_learning_classifier_model_testing(new_training_iter, test_df_sig,encoder_name, data_lm, class_map, class_labels, bs_sig=16, test_mode=False)
 		
-		og_test_mc = calculate_mc_preds(iter_model, main_df)
+		og_test_mc = calculate_mc_preds(iter_model, test_df_sig)
 		if 'Sig' not in og_test_iter_preds :
 			og_test_iter_preds['Sig'] = og_test_mc['Sig']
 		og_test_iter_preds[iter] = og_test_mc['Label']
-		
-		if 'Sig' not in og_test_iter_mc :
-			og_test_iter_mc['Sig'] = og_test_mc['Sig']
-		og_test_iter_mc[iter] = og_test_mc['Uncert']
 		
 		og_uncert_stats = uncertainty_statistics(og_test_mc)
 		og_uncert_stats.insert(0, top1_iter)
@@ -268,34 +199,18 @@ if __name__ == "__main__" :
 			unk_test_iter_preds['Sig'] = unk_test_mc['Sig']
 		unk_test_iter_preds[iter] = unk_test_mc['Label']
 		
-		if 'Sig' not in unk_test_iter_mc :
-			unk_test_iter_mc['Sig'] = unk_test_mc['Sig']
-		unk_test_iter_mc[iter] = unk_test_mc['Uncert']
-		
 		unk_uncert_stats = uncertainty_statistics(unk_test_mc)
 		unk_uncert_stats.insert(0, top1_iter)
 		unk_uncert_stats.insert(0, iter)
 		unknown_uncert_stats.append(unk_uncert_stats)
 		print(f'Unlabeled data set uncerts: {str(unk_uncert_stats)}')
 		
-		
-		if iter >= recompute_count :
-			print('Recomputing the MC Uncertainty...')
-			recomputed_mc_preds = recompute_mc_uncertainty(iter_model, recomputed_mc_preds)
-			recompute_count += RECOMPUTE_ITER_STEP
+		print('Recomputing the MC Uncertainty...')
+		recomputed_mc_preds = recompute_mc_uncertainty(iter_model, recomputed_mc_preds)
 		
 	labeled_data = pd.DataFrame(labeled_set_uncert_stats, columns=['iter', 'acc', 'mean mc', 'std mc', 'min mc', 'max mc'])
 	#labeled_data.to_csv(open('class_based_psuedo_labels_labeled.csv', 'w'))
-	unlabeled_data = pd.DataFrame(unknown_uncert_stats, columns=['iter', 'acc', 'mean mc', 'std mc', 'min mc', 'max mc'])
-	
-	# unk_test_iter_preds.to_csv(open('./nov30_data/highcert_RE-label-compute_unk_nov30.csv', 'w'))
-	# og_test_iter_preds.to_csv(open('./nov30_data/highcert_RE-label-compute_labeled_nov30.csv', 'w'))
-	# unk_test_iter_mc.to_csv(open('./nov30_data/highcert_RE-label-compute_unk_mc_nov30.csv', 'w'))
-	# og_test_iter_mc.to_csv(open('./nov30_data/highcert_RE-label-compute_labeled_mc_nov30.csv', 'w'))
-	# labeled_data.to_csv(open('./nov30_data/highcert_RE-label-compute_iterstats_og_mc_nov30.csv', 'w'))
-	# unlabeled_data.to_csv(open('./nov30_data/highcert_RE-label-compute_iterstats_unk_mc_nov30.csv', 'w'))
-	# pl_class_dist.to_csv(open('./nov30_data/highcert_RE-label-compute_classdist_nov30.csv', 'w'))
-	
+
 	
 	# pseudo_labels_iter1 = suricata_main_preds.sample(1000)
 	# suricata_main_preds.drop(pseudo_labels_iter1.index)

@@ -1,32 +1,18 @@
-import numpy as np
-import pandas as pd
 import sys
+
+import pandas as pd
+from fastai.text.core import SpacyTokenizer, Tokenizer
+
 sys.path.append('../')
-from AttackStages import SignatureMapping as attkstg_map
-from AttackStages import MicroAttackStage
-from AttackStages import MacroAttackStage
-from AttackStages import MicroToMacroMapping
-from AttackStagesCondensed import MicroAttackStageCondensed
-from fastai import *
-from fastai.text import *
-import re
 import torch
-from sklearn.model_selection import train_test_split
-from AttackStages import SensorObservability
-import MitreAttackInterface
-from sklearn.model_selection import KFold
 import statistics
-import ClassifierAnalysis
 import pickle as pkl
-from AIF_Mappings import RecentAlertsMapping
-import ChangeInIntrinsicAttention
-import random
-import LearningUtils
+from aif.AIF_Mappings import RecentAlertsMapping
+from utils import LearningUtils
 import SignatureTransferLearningNewData
-import json
+
 from SignatureAttackStagePredictor import SignatureAttackStagePredictor
 from tqdm import tqdm 
-import ipdb
 
 out_path = '../data_store/'
 if not torch.cuda.is_available():
@@ -96,7 +82,7 @@ def uncertainty_statistics(uncertainty_preds) :
 def sample_uncertainty_df(data_df, sample_size, mode='RANDOM') : 
 
 	if mode == 'RANDOM' :
-		sampled_data = data_df.sample(sample_size)
+		sampled_data = suricata_main_preds.sample(sample_size)
 		data_df.drop(sampled_data.index)
 	elif mode == 'TOP_UNCERT' :
 		sorted_df = data_df.sort_values(by='Uncert',ascending=False)
@@ -108,20 +94,6 @@ def sample_uncertainty_df(data_df, sample_size, mode='RANDOM') :
 		data_df.drop(sampled_data.index)
 	
 	return sampled_data
-	
-def update_pseudo_labels(label_df, model:SignatureAttackStagePredictor) :
-	columns = list(label_df)
-	data = label_df.values.tolist()
-	out_data = []
-	
-	
-	for sig in data :
-		new_pred = model.predict(sig[0])
-		temp_data = [sig[0], new_pred.value, sig[2]]
-		out_data.append(temp_data)
-		
-	out_df = pd.DataFrame(out_data, columns=columns)
-	return out_df
 	
 def sample_uncertainty_df_per_class(uncertainty_preds, sample_size, mode='RANDOM') :
 
@@ -145,9 +117,8 @@ if __name__ == "__main__" :
 
 	LABELED_DATA_SPLIT = .2
 	SEED = 69
-	SAMPLE_MODE = 'RANDOM'
-	BALANCE_CLASS_LABELS = False
-	RELABEL_PSEUDO = True
+	SAMPLE_MODE = 'LEAST_UNCERT'
+	BALANCE_CLASS_LABELS = True
 
 
 	tok = SpacyTokenizer('en')
@@ -163,12 +134,12 @@ if __name__ == "__main__" :
 	class_suricata_mc_preds =process_uncertainty_stats_class(uncertainty_preds)
 	suricata_mc_preds = process_uncertainty_stats(uncertainty_preds, output_df=True)
 	
-	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT,seed=SEED)
+	train_df_sig, test_df_sig = LearningUtils.split_train_test(main_df, split=LABELED_DATA_SPLIT, seed=SEED)
 	suricata_main_preds, suricata_testing_preds = LearningUtils.split_train_test(suricata_mc_preds, split=.015, seed=SEED)
 	
 	lang_model, data_lm, encoder_name = SignatureTransferLearningNewData.signature_transfer_learning_language_model(mode='all', additional_samples=None, bs_lang=64, test_mode=False, random_seed=0)
 	
-	# gt_model, top1_gt, topk_gt ,class_map_gt, miss_counts_gt, miss_stats_gt, data_stats_gt, miss_record_gt = SignatureTransferLearningNewData.signature_transfer_learning_classifier_model_testing(main_df, main_df,encoder_name, data_lm, class_map, class_labels, bs_sig=16, test_mode=False)
+	# gt_model, top1_gt, topk_gt ,class_map_gt, miss_counts_gt, miss_stats_gt, data_stats_gt, miss_record_gt = SignatureTransferLearningNewData.signature_transfer_learning_classifier_model_testing(main_df, main_df,None, data_lm, class_map, class_labels, bs_sig=16, test_mode=False)
 	
 	labeled_set_uncert_stats = []
 	unknown_uncert_stats = []
@@ -181,36 +152,20 @@ if __name__ == "__main__" :
 	
 	pl_class_dist = pd.DataFrame()
 	
-	for iter in range(0, 1500, 250) :
-		print(f"Iteration Step: {iter}, {SAMPLE_MODE}")
+	for iter in range(0, 5001, 250) :
+		print(f"Iteration Step: {iter}, {SAMPLE_MODE}, Class Bal: {BALANCE_CLASS_LABELS}")
 		
-		if not BALANCE_CLASS_LABELS :
-			pseudo_labels = sample_uncertainty_df(suricata_main_preds, iter, mode=SAMPLE_MODE)
-		else :
-			if iter > 0 :
-				pseudo_labels = sample_uncertainty_df_per_class(class_suricata_mc_preds, iter, mode=SAMPLE_MODE)
+		if iter > 0 :
+			if not BALANCE_CLASS_LABELS :
+				pseudo_labels = sample_uncertainty_df(suricata_main_preds, iter, mode=SAMPLE_MODE)
 			else :
-				pseudo_labels = pd.DataFrame()
-		#suricata_main_preds.drop(pseudo_labels.index)
-		
-		if RELABEL_PSEUDO :
-			if iter == 0 :
-				pass
-				#model = SignatureAttackStagePredictor(gt_model)
-				#pseudo_labels = update_pseudo_labels(main_df, model)
-			else: 
-				model = SignatureAttackStagePredictor(iter_model)
-				pseudo_labels = update_pseudo_labels(pseudo_labels, model)
-				#ipdb.set_trace()
-		
-	
-		if iter > 0 :	
-			new_training_iter = pd.concat([main_df, pseudo_labels])
-		else :
-			new_training_iter = main_df.copy()
+				print('CLASS BALANCING ACTIVE')
+				pseudo_labels = sample_uncertainty_df_per_class(class_suricata_mc_preds, iter, mode=SAMPLE_MODE)
+			#suricata_main_preds.drop(pseudo_labels.index)
+		else : pseudo_labels=pd.DataFrame()
 			
+		new_training_iter = pd.concat([main_df, pseudo_labels])
 		print(f'Length of training size: {len(new_training_iter)}')
-		
 		
 		label_stats = get_label_stats(new_training_iter)
 		if 'Label' not in pl_class_dist :
@@ -256,14 +211,13 @@ if __name__ == "__main__" :
 	#unlabeled_data.to_csv(open('low_cert_psuedo_labels_unlabeled_oct27.csv', 'w'))
 	
 	
-	# unk_test_iter_preds.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_unk_nov18.csv', 'w'))
-	# og_test_iter_preds.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_labeled_nov18.csv', 'w'))
-	# unk_test_iter_mc.to_csv(open('./nov18_data/lowcert_RE-pseudolabell_unk_mc_nov18.csv', 'w'))
-	# og_test_iter_mc.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_labeled_mc_nov18.csv', 'w'))
-	# labeled_data.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_iterstats_og_mc_nov18.csv', 'w'))
-	# unlabeled_data.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_iterstats_unk_mc_nov18.csv', 'w'))
-	# pl_class_dist.to_csv(open('./nov18_data/lowcert_RE-pseudolabel_classdist_nov18.csv', 'w'))
-
+	unk_test_iter_preds.to_csv(open('./nov16_data/highcert_pseudolabel_unk_BAL_nov16.csv', 'w'))
+	og_test_iter_preds.to_csv(open('./nov16_data/higcert_pseudolabel_labeled_BAL_nov16.csv', 'w'))
+	unk_test_iter_mc.to_csv(open('./nov16_data/highcert_pseudolabel_unk_mc_BAL_nov16.csv', 'w'))
+	og_test_iter_mc.to_csv(open('./nov16_data/highcert_pseudolabel_labeled_BAL_mc_nov16.csv', 'w'))
+	labeled_data.to_csv(open('./nov16_data/highcert_iterstats_labeled_mc_BAL_nov16.csv', 'w'))
+	unlabeled_data.to_csv(open('./nov16_data/highcert_iterstats_unk_mc_BAL_nov16.csv', 'w'))
+	pl_class_dist.to_csv(open('./nov16_data/highcert_iterstats_classstats_BAL_nov16.csv', 'w'))
 	
 	# pseudo_labels_iter1 = suricata_main_preds.sample(1000)
 	# suricata_main_preds.drop(pseudo_labels_iter1.index)
